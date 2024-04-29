@@ -24,3 +24,23 @@ NStartup是一个用于远程网络唤醒管理的程序，它可以通过局域
 - NStartup.Agent: 客户端程序，使用go语言开发，对NServer提供TCP客户端，对局域网发送WOL包，并允许执行本地预定义脚本，例如ssh到某个机器挂载加密分区。
 - NStartup.Query: 查询程序接口，为HTTP API 和 WEBSOCKET API提供查询接口。
 - NStartup.Web: Web管理界面，基于Query接口提供用户交互。
+
+## 资源推荐
+WOLDevice推荐:
+- 【电脑】家用电脑无疑是成本最优选择
+- 普通多盘位NAS
+- 多网口组装NAS，可以作为软路由 NAS 等 All in one，但是注意你需要在上层保持一个网络为NAgent提供网络
+
+
+NAgent 设备推荐： 
+- 【各类可刷机openwrt路由器-例如360T6】 可以作为无线路由器的同时兼任NAgent工作，成本最优选择
+- 【斐讯N1-支持5GWIFI】
+- 【树莓派-成本有点高】
+- 【各类电视盒子】
+
+NServer ：
+- 【本项目公共服务器】作为NServer其实负载不高，使用公共的Server可以满足绝大部分时需求
+- 【自建服务器】如果你有自己的服务器，那么你可以自建一个NServer，这样你可以更好的保证隐私和安全性
+
+NWeb：
+- 本项目目前只有这一个用户界面，未来可能计划使用Flutter制作一个跨平台的客户端
