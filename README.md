@@ -1,6 +1,6 @@
 # NStartup - 一个用于远程网络唤醒管理的程序
 
-<img src="./155943.png">
+<img src="https://github.com/shellus/NStartup/blob/d0a6247207bd475b551327437d217a3ee9efba6f/155943.png?raw=true">
 
 ## 项目进度
 1. 设想 √
