@@ -8,14 +8,20 @@ const (
 	ConnectionReadError   EventType = iota + 1
 	ConnectionReadTimeout EventType = iota + 1
 	WOLNodeStatusChanged  EventType = iota + 1
+	ResponseOK            EventType = iota + 1
+	ResponseError         EventType = iota + 1
+	Heartbeat             EventType = iota + 1
 )
 
 // 映射事件名称
-var EventName = map[EventType]string{
+var EventNames = map[EventType]string{
 	AgentAuthRequest:      "代理认证请求",
 	ConnectionReadError:   "连接读取错误",
 	ConnectionReadTimeout: "连接读取超时",
 	WOLNodeStatusChanged:  "WOL节点状态改变",
+	ResponseOK:            "响应OK",
+	ResponseError:         "响应错误",
+	Heartbeat:             "心跳",
 }
 
 type Event struct {

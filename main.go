@@ -9,12 +9,16 @@ import (
 var mainLog = log.New(os.Stdout, "[Main] ", log.LstdFlags)
 
 func main() {
+	// 打印bus.EventNames
+	for k, v := range server.EventNames {
+		mainLog.Printf("%d: %s\n", k, v)
+	}
 	mainServer, err := server.NewServer(nil)
 	if err != nil {
 		panic(err)
 	}
 
-	mainLog.Println("mainServer Start in", mainServer.GetListenAddr())
+	mainLog.Println("MainServer Start in", mainServer.GetListenAddr())
 	err = mainServer.Start()
 	if err != nil {
 		panic(err)

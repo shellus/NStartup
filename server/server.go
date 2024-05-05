@@ -52,6 +52,7 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 	bus.RegisterHandler(ConnectionReadError, s.handleContentError)
 	bus.RegisterHandler(ConnectionReadTimeout, s.handleContentError)
 	bus.RegisterHandler(AgentAuthRequest, s.handleAgentAuthRequest)
+	bus.RegisterHandler(Heartbeat, s.handleHeartbeat)
 	return s, nil
 }
 
@@ -89,25 +90,26 @@ func (s *NServer) handleContentError(event *Event) {
 		return
 	}
 }
+
 func (s *NServer) handleAgentAuthRequest(event *Event) {
 	agent := event.Context.(*NAgent)
 	authRequest := event.Data.(AuthRequest)
 	// 检查ID是否为一个UUID
 	id, err := uuid.Parse(authRequest.ID)
 	if err != nil {
-		agent.SendError(errors.New("ID is not a UUID"))
+		agent.ResponseError(errors.New("ID is not a UUID"))
 		agent.Close()
 		return
 	}
 	// 检查WOLInfos是否为空
 	if len(authRequest.WOLInfos) == 0 {
-		agent.SendError(errors.New("WOLInfos is empty"))
+		agent.ResponseError(errors.New("WOLInfos is empty"))
 		agent.Close()
 		return
 	}
 	// 检查UUID是否已存在
 	if s.agentPool.Exists(id.String()) {
-		agent.SendError(errors.New("ID already exists"))
+		agent.ResponseError(errors.New("ID already exists"))
 		agent.Close()
 		return
 	}
@@ -118,5 +120,10 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 	s.agentPool.Add(agent)
 	s.log.Printf("Agent %s Authenticated", agent.id)
 
-	// todo 发送成功响应
+	agent.ResponseOK()
+}
+func (s *NServer) handleHeartbeat(event *Event) {
+	agent := event.Context.(*NAgent)
+	agent.Refresh()
+	agent.ResponseOK()
 }

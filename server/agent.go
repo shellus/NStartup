@@ -85,9 +85,18 @@ func (c *NAgent) Close() {
 	// 这里CLose了，Wait里面的循环会退出
 	c.conn.Close()
 }
-func (c *NAgent) SendError(err error) {
-	// todo 这里是否应该是一个错误结构体
-	c.conn.Write([]byte(err.Error()))
+func (c *NAgent) ResponseError(err error) {
+	buf := make([]byte, 8)
+	data := []byte(err.Error())
+	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseError))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(data)))
+	c.conn.Write(data)
+}
+func (c *NAgent) ResponseOK() {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseOK))
+	binary.LittleEndian.PutUint32(buf[4:8], 0)
+	c.conn.Write(buf)
 }
 
 // readError 错误的两种情况
@@ -162,6 +171,13 @@ func (c *NAgent) Wait(bus *Bus) {
 				Context: c,
 				Data:    data,
 			})
+		case Heartbeat:
+			bus.Send(&Event{
+				Type:    Heartbeat,
+				Context: c,
+				Data:    nil,
+			})
+			c.log.Printf("Heartbeat packet received. ID: %s", c.id)
 		default:
 			c.log.Printf("Unknown event type")
 		}
