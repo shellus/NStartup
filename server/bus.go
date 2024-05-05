@@ -4,10 +4,10 @@ package server
 type EventType uint32
 
 const (
-	AgentAuthRequest      EventType = iota
-	ConnectionReadError   EventType = iota
-	ConnectionReadTimeout EventType = iota
-	WOLNodeStatusChanged  EventType = iota
+	AgentAuthRequest      EventType = iota + 1
+	ConnectionReadError   EventType = iota + 1
+	ConnectionReadTimeout EventType = iota + 1
+	WOLNodeStatusChanged  EventType = iota + 1
 )
 
 // 映射事件名称
@@ -35,10 +35,21 @@ type Bus struct {
 
 // 创建一个新的总线
 func NewBus() (*Bus, error) {
-	return &Bus{
+	bus := Bus{
 		eventChan: make(chan *Event),
 		handlers:  make(map[EventType][]func(*Event)),
-	}, nil
+	}
+	go bus.handle()
+	return &bus, nil
+}
+
+func (b *Bus) handle() {
+	for {
+		event := <-b.eventChan
+		for _, handler := range b.handlers[event.Type] {
+			handler(event)
+		}
+	}
 }
 
 // 向总线发送一个事件

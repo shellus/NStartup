@@ -13,7 +13,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	mainLog.Println("Process Start.")
+
+	mainLog.Println("mainServer Start in", mainServer.GetListenAddr())
 	err = mainServer.Start()
 	if err != nil {
 		panic(err)

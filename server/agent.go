@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -89,51 +90,63 @@ func (c *NAgent) SendError(err error) {
 	c.conn.Write([]byte(err.Error()))
 }
 
+// readError 错误的两种情况
+// ConnectionReadTimeout: 一般为客户端网络异常
+// ConnectionReadError: 一般为客户端进程退出
+func (c *NAgent) readError(bus *Bus, err error) {
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		c.log.Printf("ConnectionReadTimeout")
+		bus.Send(&Event{
+			Type:    ConnectionReadTimeout,
+			Context: c,
+			Data:    nil,
+		})
+	} else {
+		c.log.Printf("ConnectionReadError")
+		bus.Send(&Event{
+			Type:    ConnectionReadError,
+			Context: c,
+			Data:    nil,
+		})
+	}
+}
+
 // Wait 负责解析数据包，不会对NAgent进行任何修改
 // 对NAgent的修改应该通过事件总线在NServer层面进行
-
 func (c *NAgent) Wait(bus *Bus) {
 	for {
-		buf := make([]byte, 1024)
+		bufHead := make([]byte, 8)
 		// 设置超时时间为心跳间隔的两倍
 		c.conn.SetReadDeadline(time.Now().Add(HeartbeatInterval * 2 * time.Second))
 
-		_, err := c.conn.Read(buf)
-		// 错误的两种情况
-		// ConnectionReadTimeout: 一般为客户端网络异常
-		// ConnectionReadError: 一般为客户端进程退出
+		// 最小长度8字节，4字节包类型，4字节包长度
+		_, err := io.ReadFull(c.conn, bufHead)
+
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				c.log.Printf("ConnectionReadTimeout")
-				bus.Send(&Event{
-					Type:    ConnectionReadTimeout,
-					Context: c,
-					Data:    nil,
-				})
-			} else {
-				c.log.Printf("ConnectionReadError")
-				bus.Send(&Event{
-					Type:    ConnectionReadError,
-					Context: c,
-					Data:    nil,
-				})
-			}
+			c.readError(bus, err)
 			return
 		}
-		c.log.Printf("Packet received length: %d", len(buf))
+		c.log.Printf("Packet received length: %d", len(bufHead))
 		// 包类型
 		var packType uint32
-		packType = binary.LittleEndian.Uint32(buf[:4])
+		packType = binary.LittleEndian.Uint32(bufHead[:4])
+		c.log.Printf("Packet type: %d", packType)
 
 		// 包长度
 		var dataLen uint32
-		dataLen = binary.LittleEndian.Uint32(buf[4:8])
-
+		dataLen = binary.LittleEndian.Uint32(bufHead[4:8])
+		c.log.Printf("Packet data length: %d", dataLen)
+		bufData := make([]byte, dataLen)
+		_, err = io.ReadFull(c.conn, bufData)
+		if err != nil {
+			c.readError(bus, err)
+			return
+		}
 		// todo 包类型，是否应该和事件类型分开
 		switch EventType(packType) {
 		case AgentAuthRequest:
 			data := AuthRequest{}
-			err = json.Unmarshal(buf[8:dataLen], &data)
+			err = json.Unmarshal(bufData, &data)
 			if err != nil {
 				c.log.Printf("unmarshal AuthRequest error")
 				bus.Send(&Event{

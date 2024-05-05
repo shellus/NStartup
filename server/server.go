@@ -55,6 +55,9 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 	return s, nil
 }
 
+func (s *NServer) GetListenAddr() string {
+	return s.listener.Addr().String()
+}
 func (s *NServer) Start() error {
 	// 开始接收连接
 	for {
@@ -114,4 +117,6 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 	agent.Refresh()
 	s.agentPool.Add(agent)
 	s.log.Printf("Agent %s Authenticated", agent.id)
+
+	// todo 发送成功响应
 }

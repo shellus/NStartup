@@ -1,0 +1,12 @@
+{
+  "id": "77115baf-3e05-485c-a449-24b465e9fdb7",
+  "wol_infos": [
+    {
+      "name": "myServer-001",
+      "mac_addr": "10:90:27:e9:c4:99",
+      "port": 9,
+      "broadcast_addr": "10.242.255.255",
+      "ip": "10.242.38.27"
+    }
+  ]
+}
