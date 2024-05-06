@@ -128,10 +128,12 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 		return
 	}
 	// 检查UUID是否已存在
-	if s.agentPool.Exists(id.String()) {
-		agent.ResponseError(errors.New("ID already exists"))
-		agent.Close()
-		return
+	// 这里，如果是客户端异常断开，可能有5-10秒左右才会在服务端的recv函数中出错
+	// 那么，如果在这个5-10秒内客户端再次连接上来，会导致ID重复错误，其实不合理
+	// 新连接顶替旧的连接，向旧的连接发送异地登陆错误并Close连接
+	if old, ok := s.agentPool.Find(id.String()); ok {
+		old.ResponseError(errors.New("new Connection Replace Old Connection"))
+		old.Close()
 	}
 
 	agent.id = id.String()

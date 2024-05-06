@@ -132,9 +132,12 @@ func (c *NAgent) Wait(bus *Bus) {
 	// 监听是否正常退出（cancelFunc）
 	isExitSignal := false
 	go func() {
+		// 这里顺序非常重要，必须先设置isExitSignal，让后续代码正常退出
+		// 如果先关闭conn，那么Wait中的ReadFull会报错，报错又会触发事件，事件里面会调用Close或者pool remove，导致以下问题：
+		// 新连接替换旧连接，旧连接Close触发err，err处理函数里面移除id，就错误的将新的id的连接移除了
 		<-c.exitContext.Done()
-		_ = c.conn.Close()
 		isExitSignal = true
+		_ = c.conn.Close()
 	}()
 
 	c.log.Printf("%s Wait Loop Start", c.conn.RemoteAddr().String())
