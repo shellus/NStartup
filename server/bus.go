@@ -4,24 +4,36 @@ package server
 type EventType uint32
 
 const (
-	AgentAuthRequest      EventType = iota + 1
-	ConnectionReadError   EventType = iota + 1
-	ConnectionReadTimeout EventType = iota + 1
-	WOLNodeStatusChanged  EventType = iota + 1
-	ResponseOK            EventType = iota + 1
-	ResponseError         EventType = iota + 1
-	Heartbeat             EventType = iota + 1
+	// 100-199 关于数据、业务的处理状态
+	ResponseOK    EventType = 100
+	ResponseError EventType = 110
+
+	// 500-549 关于传输层的错误
+	ConnectionReadError      EventType = 510
+	ConnectionUnmarshalError EventType = 512
+	//ConnectionReadTimeout    EventType = 514 // 这个超时只能代表绝对的超时，网络层面的，目前看起来没有用到
+
+	// 600-699 服务器内部定义，只用作总线分发，不是外面发来的数据包类型
+	//HeartbeatTimeout EventType = 610 // 客户端太久没有发来心跳
+	//ResponseTimeout  EventType = 620 // 服务器发出某个请求后，客户端太久没有回应
+
+	// 700-730 关于Agent
+	AgentAuthRequest     EventType = 710
+	Heartbeat            EventType = 712
+	WOLNodeStatusChanged EventType = 720
 )
 
-// 映射事件名称
+// EventNames 映射事件名称
 var EventNames = map[EventType]string{
-	AgentAuthRequest:      "代理认证请求",
-	ConnectionReadError:   "连接读取错误",
-	ConnectionReadTimeout: "连接读取超时",
-	WOLNodeStatusChanged:  "WOL节点状态改变",
-	ResponseOK:            "响应OK",
-	ResponseError:         "响应错误",
-	Heartbeat:             "心跳",
+	ResponseOK:    "响应OK",
+	ResponseError: "响应错误",
+
+	ConnectionReadError:      "连接读取错误",
+	ConnectionUnmarshalError: "连接反序列化错误",
+
+	AgentAuthRequest:     "代理认证请求",
+	Heartbeat:            "心跳",
+	WOLNodeStatusChanged: "WOL节点状态改变",
 }
 
 type Event struct {
@@ -39,7 +51,6 @@ type Bus struct {
 	handlers map[EventType][]func(*Event)
 }
 
-// 创建一个新的总线
 func NewBus() (*Bus, error) {
 	bus := Bus{
 		eventChan: make(chan *Event),
@@ -53,17 +64,25 @@ func (b *Bus) handle() {
 	for {
 		event := <-b.eventChan
 		for _, handler := range b.handlers[event.Type] {
-			handler(event)
+			// 这个处理函数阻塞，导致chan里面的数据没人取出，导致下一个send卡住
+			// 具体分析过程见：《chan阻塞问题.xmind》
+			// 简略内容：
+			// 1. 在handler后续的调用栈中，我们无法保证到哪里去，没办法保证后续的调用栈不会调用send
+			// 2. 甚至，没法保证后续只调用1次
+			// 3. 多线程不在此考虑范围，那只需要在handler处做goroutine即可，就算不做，也只是多线程的send变单线程的handler而已，并不会死锁
+			// handler(event)
+
+			// 改为goroutine
+			// 理由是，假设没有bus总线，是否是来了多少连接、多少请求，就会发起多少调用，bus并没有创造无限goroutine, 只是继承调用处的意愿
+			go handler(event)
 		}
 	}
 }
 
-// 向总线发送一个事件
 func (b *Bus) Send(event *Event) {
 	b.eventChan <- event
 }
 
-// 注册一个事件处理函数
 func (b *Bus) RegisterHandler(eventType EventType, handler func(*Event)) {
 	b.handlers[eventType] = append(b.handlers[eventType], handler)
 }

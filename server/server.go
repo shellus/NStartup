@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"github.com/google/uuid"
 	"log"
@@ -50,7 +51,7 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 		bus:       bus,
 	}
 	bus.RegisterHandler(ConnectionReadError, s.handleContentError)
-	bus.RegisterHandler(ConnectionReadTimeout, s.handleContentError)
+	bus.RegisterHandler(ConnectionUnmarshalError, s.handleContentError)
 	bus.RegisterHandler(AgentAuthRequest, s.handleAgentAuthRequest)
 	bus.RegisterHandler(Heartbeat, s.handleHeartbeat)
 	return s, nil
@@ -59,11 +60,24 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 func (s *NServer) GetListenAddr() string {
 	return s.listener.Addr().String()
 }
-func (s *NServer) Start() error {
+
+func (s *NServer) DumpAgentTable() string {
+	return s.agentPool.Dump()
+}
+func (s *NServer) Start(cancelContext context.Context) error {
 	// 开始接收连接
+	go func() {
+		<-cancelContext.Done()
+		s.log.Printf("cancelContext Done")
+		_ = s.listener.Close()
+	}()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
+			// 判断如果是主动关闭，返回nil
+			if err, ok := err.(*net.OpError); ok && err.Err.Error() == "use of closed network connection" {
+				return nil
+			}
 			return err
 		}
 		// 创建一个新的Client
@@ -87,10 +101,14 @@ func (s *NServer) handleContentError(event *Event) {
 	// use of closed network connection 客户端断开连接
 	// wsarecv: An existing connection was forcibly closed by the remote host. 客户端断开连接
 	agent := event.Context.(*NAgent)
+	err := event.Data.(error)
 	if agent.id == IdNone {
-		agent.Close()
-		return
+		s.log.Printf("No ID Connection Close: %s", err.Error())
+	} else {
+		s.log.Printf("ID %s Connection Close: %s", agent.id, err.Error())
+		s.agentPool.Remove(agent.id)
 	}
+	return
 }
 
 func (s *NServer) handleAgentAuthRequest(event *Event) {

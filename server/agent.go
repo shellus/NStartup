@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -17,7 +19,12 @@ const IdNone = ""
 // NAgent 代理结构
 type NAgent struct {
 	// 连接，名称ID，最后活跃时间
-	conn           net.Conn
+	conn net.Conn
+	// 用来正常退出 Wait
+	cancelFunc  context.CancelFunc
+	exitContext context.Context
+	// exitDone
+	exitDone       chan struct{}
 	id             string
 	lastActiveTime int64
 	// 承载的 WOL 节点
@@ -55,11 +62,16 @@ func NewAgentPool() (*NAgentPool, error) {
 }
 
 func (p *NAgentPool) NewAgent(conn net.Conn) (*NAgent, error) {
+	exitContext, cancelFunc := context.WithCancel(context.Background())
+
 	return &NAgent{
-		conn:     conn,
-		id:       IdNone,
-		wolInfos: nil,
-		log:      log.New(os.Stdout, "[NAgent]", log.LstdFlags),
+		conn:        conn,
+		cancelFunc:  cancelFunc,
+		exitContext: exitContext,
+		exitDone:    make(chan struct{}),
+		id:          IdNone,
+		wolInfos:    nil,
+		log:         log.New(os.Stdout, "[NAgent]", log.LstdFlags),
 	}, nil
 }
 
@@ -74,6 +86,15 @@ func (p *NAgentPool) Exists(id string) bool {
 func (p *NAgentPool) Add(agent *NAgent) {
 	p.list[agent.id] = *agent
 }
+func (p *NAgentPool) Dump() string {
+	// 返回一行一个，字段包含ID，conn.RemoteAddr
+	var dump string
+	dump = "total: " + strconv.Itoa(len(p.list)) + "\n"
+	for k, v := range p.list {
+		dump += k + "," + v.conn.RemoteAddr().String() + "\n"
+	}
+	return dump
+}
 func (p *NAgentPool) Find(id string) (*NAgent, bool) {
 	agent, ok := p.list[id]
 	return &agent, ok
@@ -81,59 +102,60 @@ func (p *NAgentPool) Find(id string) (*NAgent, bool) {
 func (c *NAgent) Refresh() {
 	c.lastActiveTime = time.Now().Unix()
 }
-func (c *NAgent) Close() {
-	// 这里CLose了，Wait里面的循环会退出
-	c.conn.Close()
-}
+
 func (c *NAgent) ResponseError(err error) {
 	buf := make([]byte, 8)
 	data := []byte(err.Error())
 	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseError))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(data)))
-	c.conn.Write(data)
+	_, _ = c.conn.Write(data)
+	c.log.Printf("ResponseError: %s", err.Error())
 }
 func (c *NAgent) ResponseOK() {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseOK))
 	binary.LittleEndian.PutUint32(buf[4:8], 0)
-	c.conn.Write(buf)
+	_, _ = c.conn.Write(buf)
 }
-
-// readError 错误的两种情况
-// ConnectionReadTimeout: 一般为客户端网络异常
-// ConnectionReadError: 一般为客户端进程退出
-func (c *NAgent) readError(bus *Bus, err error) {
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		c.log.Printf("ConnectionReadTimeout")
-		bus.Send(&Event{
-			Type:    ConnectionReadTimeout,
-			Context: c,
-			Data:    nil,
-		})
-	} else {
-		c.log.Printf("ConnectionReadError：%v", err.Error())
-		bus.Send(&Event{
-			Type:    ConnectionReadError,
-			Context: c,
-			Data:    nil,
-		})
-	}
+func (c *NAgent) Close() {
+	// 顺序非常重要
+	// 1. 先发信号告诉loop这是正常退出
+	// 2. 然后loop自己咔嚓一刀断掉水管
+	// 3. 然后等待循环end
+	c.cancelFunc()
+	<-c.exitDone
 }
 
 // Wait 负责解析数据包，不会对NAgent进行任何修改
 // 对NAgent的修改应该通过事件总线在NServer层面进行
 func (c *NAgent) Wait(bus *Bus) {
+	// 监听是否正常退出（cancelFunc）
+	isExitSignal := false
+	go func() {
+		<-c.exitContext.Done()
+		_ = c.conn.Close()
+		isExitSignal = true
+	}()
+
+	c.log.Printf("%s Wait Loop Start", c.conn.RemoteAddr().String())
+LOOP:
 	for {
 		bufHead := make([]byte, 8)
 		// 设置超时时间为心跳间隔的两倍
-		c.conn.SetReadDeadline(time.Now().Add(HeartbeatInterval * 2 * time.Second))
-
+		_ = c.conn.SetReadDeadline(time.Now().Add(HeartbeatInterval * 2 * time.Second))
 		// 最小长度8字节，4字节包类型，4字节包长度
 		_, err := io.ReadFull(c.conn, bufHead)
-
 		if err != nil {
-			c.readError(bus, err)
-			return
+			// 非正常退出则发送错误事件
+			if !isExitSignal {
+				c.log.Printf("Wait Read Head Error：%v", err.Error())
+				bus.Send(&Event{
+					Type:    ConnectionReadError,
+					Context: c,
+					Data:    err,
+				})
+			}
+			break LOOP
 		}
 		c.log.Printf("Packet received length: %d", len(bufHead))
 		// 包类型
@@ -148,8 +170,16 @@ func (c *NAgent) Wait(bus *Bus) {
 		bufData := make([]byte, dataLen)
 		_, err = io.ReadFull(c.conn, bufData)
 		if err != nil {
-			c.readError(bus, err)
-			return
+			// 非正常退出则发送错误事件
+			if !isExitSignal {
+				c.log.Printf("Wait Read Data Error：%v", err.Error())
+				bus.Send(&Event{
+					Type:    ConnectionReadError,
+					Context: c,
+					Data:    err,
+				})
+			}
+			break LOOP
 		}
 		// todo 包类型，是否应该和事件类型分开
 		switch EventType(packType) {
@@ -159,11 +189,11 @@ func (c *NAgent) Wait(bus *Bus) {
 			if err != nil {
 				c.log.Printf("unmarshal AuthRequest error")
 				bus.Send(&Event{
-					Type:    ConnectionReadError,
+					Type:    ConnectionUnmarshalError,
 					Context: c,
-					Data:    nil,
+					Data:    err,
 				})
-				return
+				break LOOP
 			}
 			c.log.Printf("AgentAuthRequest packet received. ID: %s", data.ID)
 			bus.Send(&Event{
@@ -180,12 +210,15 @@ func (c *NAgent) Wait(bus *Bus) {
 			c.log.Printf("Heartbeat packet received. ID: %s", c.id)
 		default:
 			c.log.Printf("Unknown event type")
+			bus.Send(&Event{
+				Type:    ConnectionUnmarshalError,
+				Context: c,
+				Data:    err,
+			})
+			break LOOP
 		}
-
-		// todo 如果是心跳包，则刷新最后在线时间
-
-		// todo 如果是WOL节点状态变化事件，则传到事件总线
-
-		// todo 所有类型的包都应该传到事件总线进行处理
 	}
+	_ = c.conn.Close()
+	c.exitDone <- struct{}{}
+	c.log.Printf("%s Wait Loop End", c.conn.RemoteAddr().String())
 }
