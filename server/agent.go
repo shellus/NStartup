@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -191,6 +192,8 @@ LOOP:
 			err = json.Unmarshal(bufData, &data)
 			if err != nil {
 				c.log.Printf("unmarshal AuthRequest error")
+				// todo 这里发出了响应，但是客户端未接受到而是报告超时
+				c.ResponseError(errors.New("unmarshal AuthRequest error"))
 				bus.Send(&Event{
 					Type:    ConnectionUnmarshalError,
 					Context: c,
