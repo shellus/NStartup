@@ -111,7 +111,7 @@ func (c *NAgent) readError(bus *Bus, err error) {
 			Data:    nil,
 		})
 	} else {
-		c.log.Printf("ConnectionReadError")
+		c.log.Printf("ConnectionReadError：%v", err.Error())
 		bus.Send(&Event{
 			Type:    ConnectionReadError,
 			Context: c,

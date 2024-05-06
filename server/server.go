@@ -84,6 +84,8 @@ func (s *NServer) handleContentError(event *Event) {
 	// 1. 认证信息读取超时；没有ID
 	// 2. 认证信息读取错误，例如数据结构不对；没有ID
 	// 3. 后续错误；有ID；需要移除
+	// use of closed network connection 客户端断开连接
+	// wsarecv: An existing connection was forcibly closed by the remote host. 客户端断开连接
 	agent := event.Context.(*NAgent)
 	if agent.id == IdNone {
 		agent.Close()
