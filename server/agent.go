@@ -193,6 +193,7 @@ LOOP:
 			if err != nil {
 				c.log.Printf("unmarshal AuthRequest error")
 				// todo 这里发出了响应，但是客户端未接受到而是报告超时
+				// todo 因为bus是goroutine调度，所以事件处理程序待会儿再执行send，但是我马上退出循环后就结束了连接。
 				c.ResponseError(errors.New("unmarshal AuthRequest error"))
 				bus.Send(&Event{
 					Type:    ConnectionUnmarshalError,
