@@ -74,7 +74,9 @@ func (b *Bus) handle() {
 
 			// 改为goroutine
 			// 理由是，假设没有bus总线，是否是来了多少连接、多少请求，就会发起多少调用，bus并没有创造无限goroutine, 只是继承调用处的意愿
-			go handler(event)
+
+			// 还是改为同步吧，bus事件别环回了，做成单向的，智能内部向外部抛出，外部不会同级循环抛出，更不会向深层抛出
+			handler(event)
 		}
 	}
 }

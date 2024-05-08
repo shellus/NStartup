@@ -102,14 +102,30 @@ func (s *NServer) handleContentError(event *Event) {
 	// wsarecv: An existing connection was forcibly closed by the remote host. 客户端断开连接
 	agent := event.Context.(*NAgent)
 	err := event.Data.(error)
-	if agent.id == IdNone {
-		s.log.Printf("No ID Connection Close: %s", err.Error())
+
+	isClosed := false
+	// 连接类错误断开，其他的反馈给客户端
+	if event.Type == ConnectionReadError {
+		agent.Close()
+		isClosed = true
 	} else {
-		s.log.Printf("ID %s Connection Close: %s", agent.id, err.Error())
-		s.agentPool.Remove(agent.id)
+		agent.ResponseError(err)
 	}
+
+	// 如果连接结束了，判断是否需要移除ID
+	if isClosed {
+		if agent.id != IdNone {
+			s.agentPool.Remove(agent.id)
+			s.log.Printf("ID %s Connection Close: %s", agent.id, err.Error())
+		} else {
+			s.log.Printf("No ID Connection Close: %s", err.Error())
+		}
+	}
+
 	return
 }
+
+// todo 增加一个注册函数来获取一个新的UUID
 
 func (s *NServer) handleAgentAuthRequest(event *Event) {
 	agent := event.Context.(*NAgent)
@@ -134,6 +150,7 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 	if old, ok := s.agentPool.Find(id.String()); ok {
 		old.ResponseError(errors.New("new Connection Replace Old Connection"))
 		old.Close()
+		s.agentPool.Remove(old.id)
 	}
 
 	agent.id = id.String()

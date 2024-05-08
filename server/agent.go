@@ -1,10 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"net"
@@ -21,11 +19,15 @@ const IdNone = ""
 type NAgent struct {
 	// 连接，名称ID，最后活跃时间
 	conn net.Conn
-	// 用来正常退出 Wait
-	cancelFunc  context.CancelFunc
-	exitContext context.Context
-	// exitDone
-	exitDone       chan struct{}
+
+	// 用来正常退出 Wait 没有发挥作用，目前使用连接结束来控制退出
+	//cancelFunc  context.CancelFunc
+	//exitContext context.Context
+
+	// wait循环是否已经退出的chan
+	loopClosed chan struct{}
+	// 是否已发出退出信号
+	isExitSignal   bool
 	id             string
 	lastActiveTime int64
 	// 承载的 WOL 节点
@@ -63,16 +65,17 @@ func NewAgentPool() (*NAgentPool, error) {
 }
 
 func (p *NAgentPool) NewAgent(conn net.Conn) (*NAgent, error) {
-	exitContext, cancelFunc := context.WithCancel(context.Background())
+	//exitContext, cancelFunc := context.WithCancel(context.Background())
 
 	return &NAgent{
-		conn:        conn,
-		cancelFunc:  cancelFunc,
-		exitContext: exitContext,
-		exitDone:    make(chan struct{}),
-		id:          IdNone,
-		wolInfos:    nil,
-		log:         log.New(os.Stdout, "[NAgent]", log.LstdFlags),
+		conn: conn,
+		//cancelFunc:   cancelFunc,
+		//exitContext:  exitContext,
+		loopClosed:   make(chan struct{}),
+		isExitSignal: false,
+		id:           IdNone,
+		wolInfos:     nil,
+		log:          log.New(os.Stdout, "[NAgent]", log.LstdFlags),
 	}, nil
 }
 
@@ -109,8 +112,14 @@ func (c *NAgent) ResponseError(err error) {
 	data := []byte(err.Error())
 	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseError))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(data)))
-	_, _ = c.conn.Write(data)
-	c.log.Printf("ResponseError: %s", err.Error())
+	// 打印buf的内容的16进制字节形式
+	c.log.Printf("ResponseError buf: %x", buf)
+	n, errW := c.conn.Write(data)
+	if errW != nil {
+		c.log.Printf("ResponseError Write Error: %v", errW.Error())
+	} else {
+		c.log.Printf("ResponseError[%d]: %s", n, err.Error())
+	}
 }
 func (c *NAgent) ResponseOK() {
 	buf := make([]byte, 8)
@@ -118,28 +127,45 @@ func (c *NAgent) ResponseOK() {
 	binary.LittleEndian.PutUint32(buf[4:8], 0)
 	_, _ = c.conn.Write(buf)
 }
+func (c *NAgent) ReportConnError(bus *Bus, err error) {
+	if c.isExitSignal {
+		c.log.Printf("exit after conn error ignore: %v", err.Error())
+		return
+	}
+
+	c.log.Printf("Wait loop read error：%v", err.Error())
+	bus.Send(&Event{
+		Type:    ConnectionReadError,
+		Context: c,
+		Data:    err,
+	})
+}
+func (c *NAgent) ReportUnmarshalError(bus *Bus, err error) {
+	bus.Send(&Event{
+		Type:    ConnectionUnmarshalError,
+		Context: c,
+		Data:    err,
+	})
+}
 func (c *NAgent) Close() {
 	// 顺序非常重要
 	// 1. 先发信号告诉loop这是正常退出
 	// 2. 然后loop自己咔嚓一刀断掉水管
 	// 3. 然后等待循环end
-	c.cancelFunc()
-	<-c.exitDone
+	c.isExitSignal = true // isExitSignal True 后的连接错误都不算错误，是我叫它结束的
+	c.conn.Close()        // 结束连接使wait退出循环（read退出阻塞）
+	//取消函数没有发挥作用，因为wait循环并没有关联context，以后有其他用途再说
+	//c.cancelFunc()
+
+	<-c.loopClosed // 等待循环退出完成，如果在这之前它已经退出了，这里会立即通过。
 }
 
 // Wait 负责解析数据包，不会对NAgent进行任何修改
 // 对NAgent的修改应该通过事件总线在NServer层面进行
 func (c *NAgent) Wait(bus *Bus) {
-	// 监听是否正常退出（cancelFunc）
-	isExitSignal := false
-	go func() {
-		// 这里顺序非常重要，必须先设置isExitSignal，让后续代码正常退出
-		// 如果先关闭conn，那么Wait中的ReadFull会报错，报错又会触发事件，事件里面会调用Close或者pool remove，导致以下问题：
-		// 新连接替换旧连接，旧连接Close触发err，err处理函数里面移除id，就错误的将新的id的连接移除了
-		<-c.exitContext.Done()
-		isExitSignal = true
-		_ = c.conn.Close()
-	}()
+	// 本来这种循环函数都要能传入context来控制退出
+	// 但是这里未实现，而是通过Close来控制退出
+	// <-c.exitContext.Done()
 
 	c.log.Printf("%s Wait Loop Start", c.conn.RemoteAddr().String())
 LOOP:
@@ -150,15 +176,7 @@ LOOP:
 		// 最小长度8字节，4字节包类型，4字节包长度
 		_, err := io.ReadFull(c.conn, bufHead)
 		if err != nil {
-			// 非正常退出则发送错误事件
-			if !isExitSignal {
-				c.log.Printf("Wait Read Head Error：%v", err.Error())
-				bus.Send(&Event{
-					Type:    ConnectionReadError,
-					Context: c,
-					Data:    err,
-				})
-			}
+			c.ReportConnError(bus, err)
 			break LOOP
 		}
 		c.log.Printf("Packet received length: %d", len(bufHead))
@@ -174,15 +192,7 @@ LOOP:
 		bufData := make([]byte, dataLen)
 		_, err = io.ReadFull(c.conn, bufData)
 		if err != nil {
-			// 非正常退出则发送错误事件
-			if !isExitSignal {
-				c.log.Printf("Wait Read Data Error：%v", err.Error())
-				bus.Send(&Event{
-					Type:    ConnectionReadError,
-					Context: c,
-					Data:    err,
-				})
-			}
+			c.ReportConnError(bus, err)
 			break LOOP
 		}
 		// todo 包类型，是否应该和事件类型分开
@@ -191,15 +201,7 @@ LOOP:
 			data := AuthRequest{}
 			err = json.Unmarshal(bufData, &data)
 			if err != nil {
-				c.log.Printf("unmarshal AuthRequest error")
-				// todo 这里发出了响应，但是客户端未接受到而是报告超时
-				// todo 因为bus是goroutine调度，所以事件处理程序待会儿再执行send，但是我马上退出循环后就结束了连接。
-				c.ResponseError(errors.New("unmarshal AuthRequest error"))
-				bus.Send(&Event{
-					Type:    ConnectionUnmarshalError,
-					Context: c,
-					Data:    err,
-				})
+				c.ReportUnmarshalError(bus, err)
 				break LOOP
 			}
 			c.log.Printf("AgentAuthRequest packet received. ID: %s", data.ID)
@@ -225,7 +227,6 @@ LOOP:
 			break LOOP
 		}
 	}
-	_ = c.conn.Close()
-	c.exitDone <- struct{}{}
+	c.loopClosed <- struct{}{}
 	c.log.Printf("%s Wait Loop End", c.conn.RemoteAddr().String())
 }
