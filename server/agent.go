@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -125,20 +126,26 @@ func (c *NAgent) Response(EventType EventType, data interface{}) {
 	if err != nil {
 		c.log.Printf("Response write type Error: %v", err.Error())
 	}
-	// 写入包长度
-	dataBytes, err := json.Marshal(data)
-	if err != nil {
-		c.log.Printf("Response marshal data Error: %v", err.Error())
+	// 序列化data
+	var dataBytes []byte
+	if data != nil {
+		dataBytes, err = json.Marshal(data)
+		if err != nil {
+			c.log.Printf("Response marshal data Error: %v", err.Error())
+		}
 	}
+	// 写入包长度
 	dataLen := uint32(len(dataBytes))
 	err = binary.Write(w, binary.LittleEndian, dataLen)
 	if err != nil {
 		c.log.Printf("Response write dataLen Error: %v", err.Error())
 	}
 	// 写入包数据
-	_, err = w.Write(dataBytes)
-	if err != nil {
-		c.log.Printf("Response write data Error: %v", err.Error())
+	if dataLen != 0 {
+		_, err = w.Write(dataBytes)
+		if err != nil {
+			c.log.Printf("Response write data Error: %v", err.Error())
+		}
 	}
 	// 刷新缓冲区
 	err = w.Flush()
@@ -147,7 +154,7 @@ func (c *NAgent) Response(EventType EventType, data interface{}) {
 	}
 	c.log.Printf("Response packet: %d, dataLen: %d sent", EventType, dataLen)
 }
-func (c *NAgent) ReportConnError(bus *Bus, err error) {
+func (c *NAgent) connError(bus *Bus, err error) {
 	if c.isExitSignal {
 		c.log.Printf("exit after conn error ignore: %v", err.Error())
 		return
@@ -168,16 +175,16 @@ func (c *NAgent) ReportUnmarshalError(bus *Bus, err error) {
 	})
 }
 func (c *NAgent) Close() {
-	// 顺序非常重要
-	// 1. 先发信号告诉loop这是正常退出
-	// 2. 然后loop自己咔嚓一刀断掉水管
-	// 3. 然后等待循环end
+	if c.isExitSignal {
+		// 禁止重复结束，因为Close函数会阻塞等待退出完成，而只会有一个人可以等待退出完成信号
+		panic("double close")
+	}
 	c.isExitSignal = true // isExitSignal True 后的连接错误都不算错误，是我叫它结束的
-	c.conn.Close()        // 结束连接使wait退出循环（read退出阻塞）
+	_ = c.conn.Close()    // 结束连接使wait退出循环（read退出阻塞）
 	//取消函数没有发挥作用，因为wait循环并没有关联context，以后有其他用途再说
 	//c.cancelFunc()
-
 	<-c.loopClosed // 等待循环退出完成，如果在这之前它已经退出了，这里会立即通过。
+	c.log.Printf("Connection Close %s", c.conn.RemoteAddr().String())
 }
 
 // Wait 负责解析数据包，不会对NAgent进行任何修改
@@ -188,15 +195,15 @@ func (c *NAgent) Wait(bus *Bus) {
 	// <-c.exitContext.Done()
 
 	c.log.Printf("%s Wait Loop Start", c.conn.RemoteAddr().String())
+	var connErr error
 LOOP:
 	for {
 		bufHead := make([]byte, 8)
 		// 设置超时时间为心跳间隔的两倍
 		_ = c.conn.SetReadDeadline(time.Now().Add(HeartbeatInterval * 2 * time.Second))
 		// 最小长度8字节，4字节包类型，4字节包长度
-		_, err := io.ReadFull(c.conn, bufHead)
-		if err != nil {
-			c.ReportConnError(bus, err)
+		_, connErr = io.ReadFull(c.conn, bufHead)
+		if connErr != nil {
 			break LOOP
 		}
 		// 包类型
@@ -209,16 +216,15 @@ LOOP:
 		c.log.Printf("receive packet type: %d, length: %d", packType, dataLen)
 
 		bufData := make([]byte, dataLen)
-		_, err = io.ReadFull(c.conn, bufData)
-		if err != nil {
-			c.ReportConnError(bus, err)
+		_, connErr = io.ReadFull(c.conn, bufData)
+		if connErr != nil {
 			break LOOP
 		}
 		// todo 包类型，是否应该和事件类型分开
 		switch EventType(packType) {
 		case AgentAuthRequest:
 			data := AuthRequest{}
-			err = json.Unmarshal(bufData, &data)
+			err := json.Unmarshal(bufData, &data)
 			if err != nil {
 				c.ReportUnmarshalError(bus, err)
 				break LOOP
@@ -241,11 +247,15 @@ LOOP:
 			bus.Send(&Event{
 				Type:    ConnectionUnmarshalError,
 				Context: c,
-				Data:    err,
+				Data:    errors.New("unknown event type"),
 			})
-			break LOOP
 		}
 	}
 	c.loopClosed <- struct{}{}
+
+	// 必须是已经有了退出信号，才可以开始调度连接错误
+	// 因为连接错误的程序里面肯定有wait closed的功能
+	// 如果它们wait的时候我这里还没发出loopClosed，那么就死循环了
+	c.connError(bus, connErr)
 	c.log.Printf("%s Wait Loop End", c.conn.RemoteAddr().String())
 }

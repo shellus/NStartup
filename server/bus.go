@@ -45,44 +45,23 @@ type Event struct {
 	Data interface{}
 }
 type Bus struct {
-	//事件chan
-	eventChan chan *Event
 	// 事件处理函数
 	handlers map[EventType][]func(*Event)
 }
 
 func NewBus() (*Bus, error) {
 	bus := Bus{
-		eventChan: make(chan *Event),
-		handlers:  make(map[EventType][]func(*Event)),
+		handlers: make(map[EventType][]func(*Event)),
 	}
-	go bus.handle()
 	return &bus, nil
 }
 
-func (b *Bus) handle() {
-	for {
-		event := <-b.eventChan
-		for _, handler := range b.handlers[event.Type] {
-			// 这个处理函数阻塞，导致chan里面的数据没人取出，导致下一个send卡住
-			// 具体分析过程见：《chan阻塞问题.xmind》
-			// 简略内容：
-			// 1. 在handler后续的调用栈中，我们无法保证到哪里去，没办法保证后续的调用栈不会调用send
-			// 2. 甚至，没法保证后续只调用1次
-			// 3. 多线程不在此考虑范围，那只需要在handler处做goroutine即可，就算不做，也只是多线程的send变单线程的handler而已，并不会死锁
-			// handler(event)
-
-			// 改为goroutine
-			// 理由是，假设没有bus总线，是否是来了多少连接、多少请求，就会发起多少调用，bus并没有创造无限goroutine, 只是继承调用处的意愿
-
-			// 还是改为同步吧，bus事件别环回了，做成单向的，智能内部向外部抛出，外部不会同级循环抛出，更不会向深层抛出
+func (b *Bus) Send(event *Event) {
+	if handlers, ok := b.handlers[event.Type]; ok {
+		for _, handler := range handlers {
 			handler(event)
 		}
 	}
-}
-
-func (b *Bus) Send(event *Event) {
-	b.eventChan <- event
 }
 
 func (b *Bus) RegisterHandler(eventType EventType, handler func(*Event)) {

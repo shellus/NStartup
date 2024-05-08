@@ -137,12 +137,13 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 		agent.Close()
 		return
 	}
+	// 允许空WOL上线，因为这个要改成可以服务端下发配置
 	// 检查WOLInfos是否为空
-	if len(authRequest.WOLInfos) == 0 {
-		agent.ResponseError(errors.New("WOLInfos is empty"))
-		agent.Close()
-		return
-	}
+	//if len(authRequest.WOLInfos) == 0 {
+	//	agent.ResponseError(errors.New("WOLInfos is empty"))
+	//	agent.Close()
+	//	return
+	//}
 	// 检查UUID是否已存在
 	// 这里，如果是客户端异常断开，可能有5-10秒左右才会在服务端的recv函数中出错
 	// 那么，如果在这个5-10秒内客户端再次连接上来，会导致ID重复错误，其实不合理
