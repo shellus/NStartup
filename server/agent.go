@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -108,24 +109,43 @@ func (c *NAgent) Refresh() {
 }
 
 func (c *NAgent) ResponseError(err error) {
-	buf := make([]byte, 8)
-	data := []byte(err.Error())
-	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseError))
-	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(data)))
-	// 打印buf的内容的16进制字节形式
-	c.log.Printf("ResponseError buf: %x", buf)
-	n, errW := c.conn.Write(data)
-	if errW != nil {
-		c.log.Printf("ResponseError Write Error: %v", errW.Error())
-	} else {
-		c.log.Printf("ResponseError[%d]: %s", n, err.Error())
-	}
+	c.log.Printf("ResponseError: %v", err.Error())
+	c.Response(ResponseError, err.Error())
 }
 func (c *NAgent) ResponseOK() {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint32(buf[:4], uint32(ResponseOK))
-	binary.LittleEndian.PutUint32(buf[4:8], 0)
-	_, _ = c.conn.Write(buf)
+	c.log.Printf("ResponseOK")
+	c.Response(ResponseOK, nil)
+}
+
+func (c *NAgent) Response(EventType EventType, data interface{}) {
+	// 使用bufio
+	w := bufio.NewWriter(c.conn)
+	// 写入包类型
+	err := binary.Write(w, binary.LittleEndian, uint32(EventType))
+	if err != nil {
+		c.log.Printf("Response write type Error: %v", err.Error())
+	}
+	// 写入包长度
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		c.log.Printf("Response marshal data Error: %v", err.Error())
+	}
+	dataLen := uint32(len(dataBytes))
+	err = binary.Write(w, binary.LittleEndian, dataLen)
+	if err != nil {
+		c.log.Printf("Response write dataLen Error: %v", err.Error())
+	}
+	// 写入包数据
+	_, err = w.Write(dataBytes)
+	if err != nil {
+		c.log.Printf("Response write data Error: %v", err.Error())
+	}
+	// 刷新缓冲区
+	err = w.Flush()
+	if err != nil {
+		c.log.Printf("Response write Flush Error: %v", err.Error())
+	}
+	c.log.Printf("Response packet: %d, dataLen: %d sent", EventType, dataLen)
 }
 func (c *NAgent) ReportConnError(bus *Bus, err error) {
 	if c.isExitSignal {
@@ -179,16 +199,15 @@ LOOP:
 			c.ReportConnError(bus, err)
 			break LOOP
 		}
-		c.log.Printf("Packet received length: %d", len(bufHead))
 		// 包类型
 		var packType uint32
 		packType = binary.LittleEndian.Uint32(bufHead[:4])
-		c.log.Printf("Packet type: %d", packType)
 
 		// 包长度
 		var dataLen uint32
 		dataLen = binary.LittleEndian.Uint32(bufHead[4:8])
-		c.log.Printf("Packet data length: %d", dataLen)
+		c.log.Printf("receive packet type: %d, length: %d", packType, dataLen)
+
 		bufData := make([]byte, dataLen)
 		_, err = io.ReadFull(c.conn, bufData)
 		if err != nil {
