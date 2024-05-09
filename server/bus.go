@@ -18,6 +18,7 @@ const (
 	//ResponseTimeout  EventType = 620 // 服务器发出某个请求后，客户端太久没有回应
 
 	// 700-730 关于Agent
+	NAgentRegister       EventType = 702
 	AgentAuthRequest     EventType = 710
 	Heartbeat            EventType = 712
 	WOLNodeStatusChanged EventType = 720
@@ -31,6 +32,7 @@ var EventNames = map[EventType]string{
 	ConnectionReadError:      "连接读取错误",
 	ConnectionUnmarshalError: "连接反序列化错误",
 
+	NAgentRegister:       "注册节点请求",
 	AgentAuthRequest:     "代理认证请求",
 	Heartbeat:            "心跳",
 	WOLNodeStatusChanged: "WOL节点状态改变",

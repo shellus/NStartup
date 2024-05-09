@@ -53,6 +53,7 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 	bus.RegisterHandler(ConnectionReadError, s.handleContentError)
 	bus.RegisterHandler(ConnectionUnmarshalError, s.handleContentError)
 	bus.RegisterHandler(AgentAuthRequest, s.handleAgentAuthRequest)
+	bus.RegisterHandler(NAgentRegister, s.NAgentRegister)
 	bus.RegisterHandler(Heartbeat, s.handleHeartbeat)
 	return s, nil
 }
@@ -160,10 +161,23 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 	s.agentPool.Add(agent)
 	s.log.Printf("Agent %s Authenticated in %s", agent.id, agent.conn.RemoteAddr().String())
 
-	agent.ResponseOK()
+	agent.ResponseOK(nil)
 }
 func (s *NServer) handleHeartbeat(event *Event) {
 	agent := event.Context.(*NAgent)
 	agent.Refresh()
-	agent.ResponseOK()
+	agent.ResponseOK(nil)
+}
+func (s *NServer) NAgentRegister(event *Event) {
+	agent := event.Context.(*NAgent)
+	id, err := uuid.NewUUID()
+	if err != nil {
+		agent.ResponseError(err)
+		return
+	}
+	agent.ResponseOK(struct {
+		ID string `json:"id"`
+	}{
+		ID: id.String(),
+	})
 }

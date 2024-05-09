@@ -113,9 +113,9 @@ func (c *NAgent) ResponseError(err error) {
 	c.log.Printf("ResponseError: %v", err.Error())
 	c.Response(ResponseError, err.Error())
 }
-func (c *NAgent) ResponseOK() {
+func (c *NAgent) ResponseOK(data interface{}) {
 	c.log.Printf("ResponseOK")
-	c.Response(ResponseOK, nil)
+	c.Response(ResponseOK, data)
 }
 
 func (c *NAgent) Response(EventType EventType, data interface{}) {
@@ -222,6 +222,13 @@ LOOP:
 		}
 		// todo 包类型，是否应该和事件类型分开
 		switch EventType(packType) {
+		case NAgentRegister:
+			bus.Send(&Event{
+				Type:    NAgentRegister,
+				Context: c,
+				Data:    nil,
+			})
+			c.log.Printf("NAgentRegister packet received.")
 		case AgentAuthRequest:
 			data := AuthRequest{}
 			err := json.Unmarshal(bufData, &data)
