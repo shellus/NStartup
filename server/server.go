@@ -158,7 +158,7 @@ func (s *NServer) handleAgentAuthRequest(event *Event) {
 	agent.wolInfos = authRequest.WOLInfos
 	agent.Refresh()
 	s.agentPool.Add(agent)
-	s.log.Printf("Agent %s Authenticated", agent.id)
+	s.log.Printf("Agent %s Authenticated in %s", agent.id, agent.conn.RemoteAddr().String())
 
 	agent.ResponseOK()
 }

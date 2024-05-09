@@ -177,7 +177,7 @@ func (c *NAgent) ReportUnmarshalError(bus *Bus, err error) {
 func (c *NAgent) Close() {
 	if c.isExitSignal {
 		// 禁止重复结束，因为Close函数会阻塞等待退出完成，而只会有一个人可以等待退出完成信号
-		panic("double close")
+		panic("duplicate close")
 	}
 	c.isExitSignal = true // isExitSignal True 后的连接错误都不算错误，是我叫它结束的
 	_ = c.conn.Close()    // 结束连接使wait退出循环（read退出阻塞）
