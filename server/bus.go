@@ -19,7 +19,7 @@ const (
 
 	// 700-730 关于Agent
 	NAgentRegister       EventType = 702
-	AgentAuthRequest     EventType = 710
+	NAgentAuth           EventType = 710
 	Heartbeat            EventType = 712
 	WOLNodeStatusChanged EventType = 720
 )
@@ -33,7 +33,7 @@ var EventNames = map[EventType]string{
 	ConnectionUnmarshalError: "连接反序列化错误",
 
 	NAgentRegister:       "注册节点请求",
-	AgentAuthRequest:     "代理认证请求",
+	NAgentAuth:           "代理认证请求",
 	Heartbeat:            "心跳",
 	WOLNodeStatusChanged: "WOL节点状态改变",
 }

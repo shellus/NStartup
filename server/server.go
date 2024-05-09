@@ -52,8 +52,8 @@ func NewServer(config *NServerConfig) (*NServer, error) {
 	}
 	bus.RegisterHandler(ConnectionReadError, s.handleContentError)
 	bus.RegisterHandler(ConnectionUnmarshalError, s.handleContentError)
-	bus.RegisterHandler(AgentAuthRequest, s.handleAgentAuthRequest)
-	bus.RegisterHandler(NAgentRegister, s.NAgentRegister)
+	bus.RegisterHandler(NAgentAuth, s.handleNAgentAuth)
+	bus.RegisterHandler(NAgentRegister, s.handleNAgentRegister)
 	bus.RegisterHandler(Heartbeat, s.handleHeartbeat)
 	return s, nil
 }
@@ -128,7 +128,7 @@ func (s *NServer) handleContentError(event *Event) {
 
 // todo 增加一个注册函数来获取一个新的UUID
 
-func (s *NServer) handleAgentAuthRequest(event *Event) {
+func (s *NServer) handleNAgentAuth(event *Event) {
 	agent := event.Context.(*NAgent)
 	authRequest := event.Data.(AuthRequest)
 	// 检查ID是否为一个UUID
@@ -168,7 +168,7 @@ func (s *NServer) handleHeartbeat(event *Event) {
 	agent.Refresh()
 	agent.ResponseOK(nil)
 }
-func (s *NServer) NAgentRegister(event *Event) {
+func (s *NServer) handleNAgentRegister(event *Event) {
 	agent := event.Context.(*NAgent)
 	id, err := uuid.NewUUID()
 	if err != nil {

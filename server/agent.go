@@ -229,16 +229,16 @@ LOOP:
 				Data:    nil,
 			})
 			c.log.Printf("NAgentRegister packet received.")
-		case AgentAuthRequest:
+		case NAgentAuth:
 			data := AuthRequest{}
 			err := json.Unmarshal(bufData, &data)
 			if err != nil {
 				c.ReportUnmarshalError(bus, err)
 				break LOOP
 			}
-			c.log.Printf("AgentAuthRequest packet received. ID: %s", data.ID)
+			c.log.Printf("NAgentAuth packet received. ID: %s", data.ID)
 			bus.Send(&Event{
-				Type:    AgentAuthRequest,
+				Type:    NAgentAuth,
 				Context: c,
 				Data:    data,
 			})
