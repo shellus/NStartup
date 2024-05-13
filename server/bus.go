@@ -9,9 +9,7 @@ const (
 	ResponseError EventType = 110
 
 	// 500-549 关于传输层的错误
-	ConnectionReadError      EventType = 510
-	ConnectionUnmarshalError EventType = 512
-	//ConnectionReadTimeout    EventType = 514 // 这个超时只能代表绝对的超时，网络层面的，目前看起来没有用到
+	ConnectionError EventType = 510
 
 	// 600-699 服务器内部定义，只用作总线分发，不是外面发来的数据包类型
 	//HeartbeatTimeout EventType = 610 // 客户端太久没有发来心跳
@@ -29,8 +27,10 @@ var EventNames = map[EventType]string{
 	ResponseOK:    "响应OK",
 	ResponseError: "响应错误",
 
-	ConnectionReadError:      "连接读取错误",
-	ConnectionUnmarshalError: "连接反序列化错误",
+	// 读取超时、连接丢失、反序列化失败、包类型未知等
+	// 处理方式为发送反馈（除了连接中断类）
+	// 然后关闭连接（如果是TCP）
+	ConnectionError: "连接错误",
 
 	NAgentRegister:       "注册节点请求",
 	NAgentAuth:           "代理认证请求",

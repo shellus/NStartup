@@ -14,10 +14,6 @@ var mainCtx, mainCancel = context.WithCancel(context.Background())
 var exitDone = make(chan struct{})
 
 func main() {
-	// 打印bus.EventNames
-	for k, v := range server.EventNames {
-		mainLog.Printf("%d: %s\n", k, v)
-	}
 	mainServer, err := server.NewServer(nil)
 	if err != nil {
 		panic(err)
@@ -25,10 +21,7 @@ func main() {
 
 	mainLog.Println("MainServer Start in", mainServer.GetListenAddr())
 	go func() {
-		err = mainServer.Start(mainCtx)
-		if err != nil {
-			panic(err)
-		}
+		mainServer.Start(mainCtx)
 		exitDone <- struct{}{}
 	}()
 
