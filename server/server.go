@@ -39,7 +39,7 @@ type CustomLengthFieldProtocol struct {
 	Data       []byte
 }
 
-func (cc *CustomLengthFieldProtocol) Encode(c gnet.Conn, buf []byte) ([]byte, error) {
+func (cc *CustomLengthFieldProtocol) Encode(_ gnet.Conn, buf []byte) ([]byte, error) {
 	return buf, nil
 }
 func (cc *CustomLengthFieldProtocol) Decode(c gnet.Conn) ([]byte, error) {
@@ -50,8 +50,14 @@ func (cc *CustomLengthFieldProtocol) Decode(c gnet.Conn) ([]byte, error) {
 		byteBuffer := bytes.NewBuffer(header)
 		var actionType uint32
 		var dataLength uint32
-		binary.Read(byteBuffer, binary.LittleEndian, &actionType)
-		binary.Read(byteBuffer, binary.LittleEndian, &dataLength)
+		err := binary.Read(byteBuffer, binary.LittleEndian, &actionType)
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Read(byteBuffer, binary.LittleEndian, &dataLength)
+		if err != nil {
+			return nil, err
+		}
 		// to check the protocol version and actionType,
 		// reset buffer if the version or actionType is not correct
 		//if pbVersion != DefaultProtocolVersion || isCorrectAction(actionType) == false {
@@ -87,13 +93,18 @@ func (s *NServer) React(frame []byte, c gnet.Conn) (out []byte, action gnet.Acti
 
 	// 如果 packType 在 NAgentRegister、NAgentAuth 则为匿名请求
 	if EventType(packType) == NAgentRegister || EventType(packType) == NAgentAuth {
-		OnPacketAnonymous(s.log, c, s.bus, packType, frame[8:])
+		err := OnPacketAnonymous(s.log, c, s.bus, packType, frame[8:])
+		if err != nil {
+			s.log.Printf("React OnPacketAnonymous Error: %s", err.Error())
+		}
 		return
 	}
 	agent := c.Context().(*NAgent)
-	agent.OnPacket(s.bus, packType, frame[8:])
+	err := agent.OnPacket(s.bus, packType, frame[8:])
+	if err != nil {
+		s.log.Printf("React OnPacket Error: %s", err.Error())
+	}
 	return
-	//bufData := frame[8:]
 }
 
 func NewServer(config *NServerConfig) (*NServer, error) {
@@ -186,36 +197,72 @@ func (s *NServer) handleNAgentRegister(event *Event) {
 	conn := event.Context.(gnet.Conn)
 	id, err := uuid.NewUUID()
 	if err != nil {
-		conn.AsyncWrite(buildErrorPacket(err))
+		s.log.Printf("NAgentRegister NewUUID Error: %s", err.Error())
+		err = connSendTo(conn, buildErrorPacket(err))
+		if err != nil {
+			s.log.Printf("NAgentRegister NewUUID AsyncWrite Error: %s", err.Error())
+		}
 		return
 	}
-	conn.AsyncWrite(buildOKPacket(struct {
+	s.log.Printf("NAgentRegister ID: %s", id.String())
+
+	err = connSendTo(conn, buildOKPacket(struct {
 		ID string `json:"id"`
 	}{
 		ID: id.String(),
 	}))
+	if err != nil {
+		s.log.Printf("NAgentRegister AsyncWrite Error: %s", err.Error())
+	}
+}
+
+// connSendTo 因为AsyncWrite只能用于TCP，就一个send要分两个方法！！！
+func connSendTo(conn gnet.Conn, data []byte) error {
+	// 根据连接是UDP还是TCP选择使用SendTo或者AsyncWrite
+	if conn.LocalAddr().Network() == "udp" {
+		return conn.SendTo(data)
+	}
+	return connSendTo(conn, data)
 }
 
 // buildErrorPacket 构建错误包
 func buildErrorPacket(err error) []byte {
 	buf := bytes.NewBuffer(nil)
-	binary.Write(buf, binary.LittleEndian, uint32(ResponseError))
-	binary.Write(buf, binary.LittleEndian, uint32(len(err.Error())))
+	err2 := binary.Write(buf, binary.LittleEndian, uint32(ResponseError))
+	if err2 != nil {
+		panic(err2)
+	}
+	err2 = binary.Write(buf, binary.LittleEndian, uint32(len(err.Error())))
+	if err2 != nil {
+		panic(err2)
+	}
 	buf.Write([]byte(err.Error()))
 	return buf.Bytes()
 }
 func buildOKPacket(data interface{}) []byte {
 	buf := bytes.NewBuffer(nil)
-	binary.Write(buf, binary.LittleEndian, uint32(ResponseOK))
+	err := binary.Write(buf, binary.LittleEndian, uint32(ResponseOK))
+	if err != nil {
+		panic(err)
+	}
 	if data != nil {
 		dataBytes, err := json.Marshal(data)
 		if err != nil {
 			return buildErrorPacket(err)
 		}
-		binary.Write(buf, binary.LittleEndian, uint32(len(dataBytes)))
-		buf.Write(dataBytes)
+		err = binary.Write(buf, binary.LittleEndian, uint32(len(dataBytes)))
+		if err != nil {
+			panic(err)
+		}
+		_, err = buf.Write(dataBytes)
+		if err != nil {
+			panic(err)
+		}
 	} else {
-		binary.Write(buf, binary.LittleEndian, uint32(0))
+		err = binary.Write(buf, binary.LittleEndian, uint32(0))
+		if err != nil {
+			panic(err)
+		}
 	}
 	return buf.Bytes()
 }
@@ -226,8 +273,14 @@ func (s *NServer) handleNAgentAuth(event *Event) {
 	// 检查ID是否为一个UUID
 	id, err := uuid.Parse(authRequest.ID)
 	if err != nil {
-		conn.AsyncWrite(buildErrorPacket(err))
-		conn.Close()
+		err := connSendTo(conn, buildErrorPacket(err))
+		if err != nil {
+			s.log.Printf("NAgentAuth AsyncWrite Error: %s", err.Error())
+		}
+		err = conn.Close()
+		if err != nil {
+			s.log.Printf("NAgentAuth Close Error: %s", err.Error())
+		}
 		return
 	}
 	// 允许空WOL上线，因为这个要改成可以服务端下发配置
@@ -255,7 +308,10 @@ func (s *NServer) handleNAgentAuth(event *Event) {
 	conn.SetContext(agent)
 	s.log.Printf("Agent %s Authenticated in %s", agent.id, agent.conn.RemoteAddr().String())
 
-	conn.AsyncWrite(buildOKPacket(nil))
+	err = connSendTo(conn, buildOKPacket(nil))
+	if err != nil {
+		s.log.Printf("NAgentAuth AsyncWrite Error: %s", err.Error())
+	}
 }
 func (s *NServer) handleHeartbeat(event *Event) {
 	agent := event.Context.(*NAgent)
