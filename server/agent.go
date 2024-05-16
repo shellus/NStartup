@@ -225,7 +225,6 @@ func (c *NAgent) OnPacket(bus *Bus, packType uint32, bufData []byte) error {
 	return nil
 }
 func OnPacketAnonymous(logServer *log.Logger, c gnet.Conn, bus *Bus, packType uint32, bufData []byte) error {
-	logServer.Printf("OnPacketAnonymous %d \n", packType)
 	// 这个IF里面的上下文是连接，而不是Agent
 	if EventType(packType) == NAgentRegister {
 		bus.Send(&Event{
@@ -233,7 +232,6 @@ func OnPacketAnonymous(logServer *log.Logger, c gnet.Conn, bus *Bus, packType ui
 			Context: c,
 			Data:    nil,
 		})
-		logServer.Printf("NAgentRegister packet received")
 		return nil
 	} else if EventType(packType) == NAgentAuth {
 		data := AuthRequest{}
@@ -241,7 +239,6 @@ func OnPacketAnonymous(logServer *log.Logger, c gnet.Conn, bus *Bus, packType ui
 		if err != nil {
 			return err
 		}
-		logServer.Printf("NAgentAuth packet received. ID: %s", data.ID)
 		bus.Send(&Event{
 			Type:    NAgentAuth,
 			Context: c,

@@ -82,6 +82,10 @@ func (cc *CustomLengthFieldProtocol) Decode(c gnet.Conn) ([]byte, error) {
 }
 
 func (s *NServer) React(frame []byte, c gnet.Conn) (out []byte, action gnet.Action) {
+	if len(frame) < 8 {
+		s.log.Printf("React frame length expect 8, but got %d", len(frame))
+		return
+	}
 	// 包类型
 	var packType uint32
 	packType = binary.LittleEndian.Uint32(frame[:4])
@@ -91,6 +95,11 @@ func (s *NServer) React(frame []byte, c gnet.Conn) (out []byte, action gnet.Acti
 	dataLen = binary.LittleEndian.Uint32(frame[4:8])
 	s.log.Printf("receive packet type: %d, length: %d", packType, dataLen)
 
+	// 如果dataLen不为0，则检查frame长度是否足够
+	if dataLen != 0 && uint32(len(frame)) < dataLen+8 {
+		s.log.Printf("React frame length expect %d, but got %d", dataLen+8, len(frame))
+		return
+	}
 	// 如果 packType 在 NAgentRegister、NAgentAuth 则为匿名请求
 	if EventType(packType) == NAgentRegister || EventType(packType) == NAgentAuth {
 		err := OnPacketAnonymous(s.log, c, s.bus, packType, frame[8:])
@@ -198,7 +207,7 @@ func (s *NServer) handleNAgentRegister(event *Event) {
 	id, err := uuid.NewUUID()
 	if err != nil {
 		s.log.Printf("NAgentRegister NewUUID Error: %s", err.Error())
-		err = connSendTo(conn, buildErrorPacket(err))
+		err = s.connSendTo(conn, buildErrorPacket(err))
 		if err != nil {
 			s.log.Printf("NAgentRegister NewUUID AsyncWrite Error: %s", err.Error())
 		}
@@ -206,7 +215,7 @@ func (s *NServer) handleNAgentRegister(event *Event) {
 	}
 	s.log.Printf("NAgentRegister ID: %s", id.String())
 
-	err = connSendTo(conn, buildOKPacket(struct {
+	err = s.connSendTo(conn, buildOKPacket(struct {
 		ID string `json:"id"`
 	}{
 		ID: id.String(),
@@ -217,12 +226,15 @@ func (s *NServer) handleNAgentRegister(event *Event) {
 }
 
 // connSendTo 因为AsyncWrite只能用于TCP，就一个send要分两个方法！！！
-func connSendTo(conn gnet.Conn, data []byte) error {
+func (s *NServer) connSendTo(conn gnet.Conn, data []byte) error {
+	// 匿名发送
+	s.log.Printf("connSendTo [%s]%s, len:%d", conn.RemoteAddr().Network(), conn.RemoteAddr().String(), len(data))
+
 	// 根据连接是UDP还是TCP选择使用SendTo或者AsyncWrite
 	if conn.LocalAddr().Network() == "udp" {
 		return conn.SendTo(data)
 	}
-	return connSendTo(conn, data)
+	return conn.AsyncWrite(data)
 }
 
 // buildErrorPacket 构建错误包
@@ -273,7 +285,7 @@ func (s *NServer) handleNAgentAuth(event *Event) {
 	// 检查ID是否为一个UUID
 	id, err := uuid.Parse(authRequest.ID)
 	if err != nil {
-		err := connSendTo(conn, buildErrorPacket(err))
+		err := s.connSendTo(conn, buildErrorPacket(err))
 		if err != nil {
 			s.log.Printf("NAgentAuth AsyncWrite Error: %s", err.Error())
 		}
@@ -308,7 +320,7 @@ func (s *NServer) handleNAgentAuth(event *Event) {
 	conn.SetContext(agent)
 	s.log.Printf("Agent %s Authenticated in %s", agent.id, agent.conn.RemoteAddr().String())
 
-	err = connSendTo(conn, buildOKPacket(nil))
+	err = s.connSendTo(conn, buildOKPacket(nil))
 	if err != nil {
 		s.log.Printf("NAgentAuth AsyncWrite Error: %s", err.Error())
 	}
