@@ -34,8 +34,6 @@ type NAgent struct {
 	//cancelFunc  context.CancelFunc
 	//exitContext context.Context
 
-	// wait循环是否已经退出的chan
-	loopClosed chan struct{}
 	// 是否已发出退出信号
 	isExitSignal   bool
 	id             string
@@ -81,7 +79,6 @@ func (p *NAgentPool) NewAgent(conn gnet.Conn) (*NAgent, error) {
 		conn: conn,
 		//cancelFunc:   cancelFunc,
 		//exitContext:  exitContext,
-		loopClosed:   make(chan struct{}),
 		isExitSignal: false,
 		id:           IdNone,
 		wolInfos:     nil,
@@ -96,7 +93,6 @@ func (p *NAgentPool) NewAgentUDP(conn AgentUdpConn) (*NAgent, error) {
 		connUDP: conn,
 		//cancelFunc:   cancelFunc,
 		//exitContext:  exitContext,
-		loopClosed:   make(chan struct{}),
 		isExitSignal: false,
 		id:           IdNone,
 		wolInfos:     nil,
@@ -199,7 +195,6 @@ func (c *NAgent) Close() {
 	_ = c.conn.Close()    // 结束连接使wait退出循环（read退出阻塞）
 	//取消函数没有发挥作用，因为wait循环并没有关联context，以后有其他用途再说
 	//c.cancelFunc()
-	<-c.loopClosed // 等待循环退出完成，如果在这之前它已经退出了，这里会立即通过。
 	c.log.Printf("Connection Close %s", c.conn.RemoteAddr().String())
 }
 

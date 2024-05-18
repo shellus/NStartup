@@ -307,7 +307,7 @@ func (s *NServer) handleNAgentAuth(event *Event) {
 	// 那么，如果在这个5-10秒内客户端再次连接上来，会导致ID重复错误，其实不合理
 	// 新连接顶替旧的连接，向旧的连接发送异地登陆错误并Close连接
 	if old, ok := s.agentPool.Find(id.String()); ok {
-		old.ResponseError(errors.New("new Connection Replace Old Connection"))
+		old.ResponseError(errors.New(fmt.Sprintf("new %s replace Old %s", conn.RemoteAddr().String(), old.conn.RemoteAddr().String())))
 		old.Close()
 		s.agentPool.Remove(old.id)
 	}
