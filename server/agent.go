@@ -7,9 +7,7 @@ import (
 	"errors"
 	"github.com/panjf2000/gnet"
 	"log"
-	"net"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -17,23 +15,11 @@ import (
 const HeartbeatInterval = 60
 const IdNone = ""
 
-// AgentUdpConn 看起来UDP应该是UDPConn，但是其实net.UDPConn 只是监听端口专用的，并不能兼容客户端使用。
-// 所以这里就自己做一个结构，用来代替net.UDPConn，用法兼容net.conn
-type AgentUdpConn struct {
-	server *net.UDPConn
-	addr   net.Addr
-}
-
 // NAgent 代理结构
 type NAgent struct {
 	// 连接，名称ID，最后活跃时间
-	conn    gnet.Conn
-	connUDP AgentUdpConn
-
-	// 用来正常退出 Wait 没有发挥作用，目前使用连接结束来控制退出
-	//cancelFunc  context.CancelFunc
-	//exitContext context.Context
-
+	conn  gnet.Conn
+	isUDP bool
 	// 是否已发出退出信号
 	isExitSignal   bool
 	id             string
@@ -43,10 +29,6 @@ type NAgent struct {
 	// 是否已经认证上线
 	//authed  bool // 不需要，看lastActiveTime是否为0即可
 	log *log.Logger
-}
-
-type NAgentPool struct {
-	list map[string]NAgent
 }
 
 // WOLInfo WOL节点信息结构
@@ -66,19 +48,10 @@ type AuthRequest struct {
 	WOLInfos []WOLInfo `json:"wol_infos"`
 }
 
-func NewAgentPool() (*NAgentPool, error) {
-	return &NAgentPool{
-		list: make(map[string]NAgent),
-	}, nil
-}
-
-func (p *NAgentPool) NewAgent(conn gnet.Conn) (*NAgent, error) {
-	//exitContext, cancelFunc := context.WithCancel(context.Background())
-
+func NewAgent(conn gnet.Conn) (*NAgent, error) {
 	return &NAgent{
-		conn: conn,
-		//cancelFunc:   cancelFunc,
-		//exitContext:  exitContext,
+		conn:         conn,
+		isUDP:        conn.LocalAddr().Network() == "udp",
 		isExitSignal: false,
 		id:           IdNone,
 		wolInfos:     nil,
@@ -86,44 +59,6 @@ func (p *NAgentPool) NewAgent(conn gnet.Conn) (*NAgent, error) {
 	}, nil
 }
 
-func (p *NAgentPool) NewAgentUDP(conn AgentUdpConn) (*NAgent, error) {
-	//exitContext, cancelFunc := context.WithCancel(context.Background())
-
-	return &NAgent{
-		connUDP: conn,
-		//cancelFunc:   cancelFunc,
-		//exitContext:  exitContext,
-		isExitSignal: false,
-		id:           IdNone,
-		wolInfos:     nil,
-		log:          log.New(os.Stdout, "[NAgent]", log.LstdFlags),
-	}, nil
-}
-
-func (p *NAgentPool) Remove(id string) {
-	delete(p.list, id)
-}
-
-func (p *NAgentPool) Exists(id string) bool {
-	_, ok := p.list[id]
-	return ok
-}
-func (p *NAgentPool) Add(agent *NAgent) {
-	p.list[agent.id] = *agent
-}
-func (p *NAgentPool) Dump() string {
-	// 返回一行一个，字段包含ID，conn.RemoteAddr
-	var dump string
-	dump = "total: " + strconv.Itoa(len(p.list)) + "\n"
-	for k, v := range p.list {
-		dump += k + "," + v.conn.RemoteAddr().String() + "\n"
-	}
-	return dump
-}
-func (p *NAgentPool) Find(id string) (*NAgent, bool) {
-	agent, ok := p.list[id]
-	return &agent, ok
-}
 func (c *NAgent) Refresh() {
 	c.lastActiveTime = time.Now().Unix()
 }
@@ -166,8 +101,12 @@ func (c *NAgent) Response(EventType EventType, data interface{}) {
 			c.log.Printf("Response write data Error: %v", err.Error())
 		}
 	}
-	// 刷新缓冲区
-	err = c.conn.AsyncWrite(w.Bytes())
+	// 根据连接是UDP还是TCP选择使用SendTo或者AsyncWrite
+	if c.isUDP {
+		err = c.conn.SendTo(w.Bytes())
+	} else {
+		err = c.conn.AsyncWrite(w.Bytes())
+	}
 	if err != nil {
 		c.log.Printf("Response write Error: %v", err.Error())
 	}
@@ -200,8 +139,25 @@ func (c *NAgent) Close() {
 
 func (c *NAgent) OnPacket(bus *Bus, packType uint32, bufData []byte) error {
 	switch EventType(packType) {
+	case NAgentRegister:
+		bus.Send(&Event{
+			Type:    NAgentRegister,
+			Context: c,
+			Data:    nil,
+		})
+		c.log.Printf("NAgentRegister packet received. Conn: %s", c.conn.RemoteAddr().String())
 	case NAgentAuth:
-
+		data := AuthRequest{}
+		err := json.Unmarshal(bufData, &data)
+		if err != nil {
+			return err
+		}
+		bus.Send(&Event{
+			Type:    NAgentAuth,
+			Context: c,
+			Data:    data,
+		})
+		c.log.Printf("NAgentAuth packet received. ID: %s", c.id)
 	case Heartbeat:
 		bus.Send(&Event{
 			Type:    Heartbeat,
